@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" class="dark-mode">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SchoolSync AI - Your Ultimate Study Partner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code&display=swap" rel="stylesheet" />
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body data-user-id="{{ user.sub }}" data-user-name="{{ user.name }}" data-user-picture="{{ user.picture }}">
+    <div id="app-container">
+        <div class="container">
+            <header class="main-header">
+                <div class="header-left-space">
+                    <button type="button" id="dashboard-btn" class="mode-btn" data-mode="dashboard" title="Go to Dashboard"><i class="ph-fill ph-house"></i> Dashboard</button>
+                </div>
+                <a href="#" id="logo-link" class="logo">
+                    <img src="https://i.ibb.co/mVbFmyCX/20250630-2107-School-Sync-AI-Logo-Design-remix-01jz1z4r23e3dbpjgwmdcsqpkz.png" alt="SchoolSync AI Logo"/>
+                </a>
+                <div class="header-right-section">
+                    <div class="header-controls">
+                        <button type="button" id="toggle-calculator-btn" title="Toggle Calculator"><i class="ph-fill ph-calculator"></i></button>
+                        <button type="button" id="theme-toggle-btn" title="Toggle Theme"><i class="ph-fill ph-moon"></i></button>
+                    </div>
+                    <div class="profile-container" id="profile-container">
+                        <img src="{{ user.picture }}" alt="Profile picture" class="profile-pic" id="profile-pic-header" referrerPolicy="no-referrer">
+                        <div class="profile-dropdown" id="profile-dropdown">
+                            <div class="profile-info">
+                                <strong id="profile-name-header">{{ user.name }}</strong>
+                                <span>{{ user.email }}</span>
+                            </div>
+                            <a href="#" class="profile-dropdown-link" id="my-decks-btn">
+                                <i class="ph-fill ph-cards"></i> My Decks
+                            </a>
+                            <a href="#" class="profile-dropdown-link" id="settings-btn">
+                                <i class="ph-fill ph-gear"></i> Settings
+                            </a>
+                            <a href="/logout" class="profile-dropdown-link logout-link">
+                                <i class="ph-fill ph-sign-out"></i> Logout
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <main>
+                <!-- Dashboard Content -->
+                <section id="dashboard-section">
+                    <h2 id="dashboard-welcome">Welcome back!</h2>
+                    <div class="dashboard-grid">
+                        <div class="dashboard-card" id="recent-decks-card">
+                            <h3><i class="ph-fill ph-cards"></i> Recent Decks</h3>
+                            <div id="dashboard-decks-list">
+                                <p class="placeholder">You haven't created any decks yet. Try the Flashcard Generator!</p>
+                            </div>
+                        </div>
+                        <div class="dashboard-card" id="stats-card">
+                             <h3><i class="ph-fill ph-chart-line"></i> Your Week</h3>
+                             <div id="dashboard-stats-list">
+                                <p class="placeholder">Activity stats coming soon!</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                
+                <!-- Mode Selector - now part of the default view -->
+                <section class="mode-selector">
+                    <h3 class="mode-selector-title">What would you like to do?</h3>
+                    <div class="modes">
+                        <button type="button" class="mode-btn" data-mode="homework_helper"><i class="ph-fill ph-student"></i> Homework Helper</button>
+                        <button type="button" class="mode-btn" data-mode="study_guide_maker"><i class="ph-fill ph-notebook"></i> Study Guide Maker</button>
+                        <button type="button" class="mode-btn" data-mode="concept_explainer"><i class="ph-fill ph-lightbulb"></i> Concept Explainer</button>
+                        <button type="button" class="mode-btn" data-mode="paper_grader"><i class="ph-fill ph-file-text"></i> Paper Grader</button>
+                        <button type="button" class="mode-btn" data-mode="pdf_qa"><i class="ph-fill ph-file-pdf"></i> PDF Q&A</button>
+                        <button type="button" class="mode-btn" data-mode="flashcard_mode"><i class="ph-fill ph-cards"></i> Flashcards</button>
+                        <button type="button" class="mode-btn" data-mode="quiz_mode"><i class="ph-fill ph-list-checks"></i> Quiz <span class="experimental-tag">BETA</span></button>
+                    </div>
+                </section>
+
+                <!-- Tool Sections (hidden by default) -->
+                <section id="pdf-upload-section" class="pdf-upload-section hidden">
+                    <h3>Upload a Document for Q&A</h3>
+                    <form id="upload-form">
+                        <label for="pdf-file-input" class="sr-only">PDF file</label>
+                        <input type="file" id="pdf-file-input" name="pdf-file" accept=".pdf" required />
+                        <button type="submit" class="styled-button">Upload & Process</button>
+                    </form>
+                    <div id="upload-status" class="status-message" role="status"></div>
+                </section>
+
+                <section class="chat-section hidden" id="chat-section">
+                    <div class="chat-header">
+                        <h3 id="chat-mode-title">Conversation</h3>
+                        <div class="header-controls">
+                            <button type="button" id="export-pdf-btn" title="Export Chat to PDF"><i class="ph-fill ph-file-arrow-down"></i></button>
+                            <button type="button" id="clear-chat-btn" title="Clear Conversation"><i class="ph-fill ph-trash"></i></button>
+                        </div>
+                    </div>
+                    <div id="chat-window" aria-live="polite"></div>
+                    <div id="typing-indicator" class="typing-indicator hidden">
+                        <span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>
+                    </div>
+                    <form id="chat-form" class="input-area">
+                        <label for="user-question" class="sr-only">Your Question</label>
+                        <textarea id="user-question" placeholder="Ask a question..." required rows="1"></textarea>
+                        <button id="ask-button" type="submit" title="Send message"><i class="ph-fill ph-paper-plane-right"></i></button>
+                    </form>
+                </section>
+
+                <section id="paper-grader-section" class="hidden">
+                    <h3>AI Paper Grader</h3>
+                    <form id="paper-grader-form">
+                        <fieldset class="paper-grader-fieldset">
+                            <legend>Grade Level</legend>
+                            <div id="grade-selector-container" class="grade-selector-grid">
+                                <button type="button" class="selector-btn" data-value="Kindergarten">K</button>
+                                <button type="button" class="selector-btn" data-value="Grade 1">1</button>
+                                <button type="button" class="selector-btn" data-value="Grade 2">2</button>
+                                <button type="button" class="selector-btn" data-value="Grade 3">3</button>
+                                <button type="button" class="selector-btn" data-value="Grade 4">4</button>
+                                <button type="button" class="selector-btn" data-value="Grade 5">5</button>
+                                <button type="button" class="selector-btn" data-value="Grade 6">6</button>
+                                <button type="button" class="selector-btn" data-value="Grade 7">7</button>
+                                <button type="button" class="selector-btn" data-value="Grade 8">8</button>
+                                <button type="button" class="selector-btn active" data-value="Grade 9">9</button>
+                                <button type="button" class="selector-btn" data-value="Grade 10">10</button>
+                                <button type="button" class="selector-btn" data-value="Grade 11">11</button>
+                                <button type="button" class="selector-btn" data-value="Grade 12">12</button>
+                                <button type="button" class="selector-btn" data-value="College">College</button>
+                            </div>
+                        </fieldset>
+                        <fieldset class="paper-grader-fieldset">
+                            <legend>Paper Type</legend>
+                            <div id="type-selector-container" class="type-selector-group">
+                                <button type="button" class="selector-btn active" data-value="Narrative">Narrative</button>
+                                <button type="button" class="selector-btn" data-value="Informative">Informative</button>
+                                <button type="button" class="selector-btn" data-value="Opinion">Opinion</button>
+                            </div>
+                        </fieldset>
+                        <textarea id="paper-grader-text" placeholder="Paste your full paper here..." required></textarea>
+                        <button type="submit" class="styled-button">Grade My Paper</button>
+                    </form>
+                    <div id="paper-grader-status" class="status-message" role="status"></div>
+                    <div id="paper-grader-results"></div>
+                </section>
+
+                <section id="flashcard-section" class="hidden">
+                    <h3>AI Flashcard Generator</h3>
+                    <form id="flashcard-gen-form" class="generator-form">
+                        <label for="flashcard-topic" class="sr-only">Topic for flashcards</label>
+                        <input type="text" id="flashcard-topic" placeholder="e.g., The basics of photosynthesis" required />
+                        <div class="count-selector">
+                            <label for="flashcard-count">Number of Flashcards:</label>
+                            <input type="range" id="flashcard-count" min="3" max="20" value="5">
+                            <span id="flashcard-count-display">5</span>
+                        </div>
+                        <button type="submit" class="styled-button">Generate Flashcards</button>
+                    </form>
+                    <div id="flashcard-status" class="status-message" role="status"></div>
+                    <div id="flashcard-viewer" class="flashcard-viewer hidden">
+                        <div id="flashcard-container" title="Click to flip"></div>
+                        <div class="flashcard-controls">
+                            <button id="flashcard-prev-btn" class="styled-button secondary">Previous</button>
+                            <button id="save-deck-btn" class="styled-button">Save Deck</button>
+                            <button id="flashcard-next-btn" class="styled-button">Next</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="quiz-section" class="hidden">
+                    <h3>AI Quiz Generator</h3>
+                    <form id="quiz-gen-form" class="generator-form">
+                        <label for="quiz-topic" class="sr-only">Topic for quiz</label>
+                        <input type="text" id="quiz-topic" placeholder="e.g., World War II European Theater" required />
+                        <div class="count-selector">
+                            <label for="quiz-question-count">Number of Questions:</label>
+                            <input type="range" id="quiz-question-count" min="3" max="15" value="5">
+                            <span id="quiz-count-display">5</span>
+                        </div>
+                        <button type="submit" class="styled-button">Generate Quiz</button>
+                    </form>
+                    <div id="quiz-status" class="status-message" role="status"></div>
+                    <div id="quiz-viewer" class="hidden">
+                        <div id="quiz-progress"></div>
+                        <p id="quiz-question-container" class="quiz-question"></p>
+                        <form id="quiz-form">
+                            <fieldset id="quiz-options"></fieldset>
+                        </form>
+                        <div id="quiz-nav-controls">
+                            <button id="quiz-prev-btn" class="styled-button secondary">Previous</button>
+                            <button id="quiz-next-btn" class="styled-button">Next</button>
+                        </div>
+                    </div>
+                    <div id="quiz-review-section" class="hidden">
+                        <h3 id="quiz-results-header">Quiz Results</h3>
+                        <div id="quiz-review-container"></div>
+                        <button id="take-new-quiz-btn" class="styled-button">Take Another Quiz</button>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <aside id="calculator" class="hidden" tabindex="-1" aria-labelledby="calc-header">
+        <div class="calculator-header" id="calc-header">
+            <span>Calculator</span>
+            <button id="close-calculator" title="Close Calculator" aria-label="Close Calculator">×</button>
+        </div>
+        <input type="text" id="calc-display" readonly aria-live="polite" placeholder="0" />
+        <div class="calc-buttons">
+            <button id="calc-clear" class="clear">C</button><button data-value="(">(</button><button data-value=")">)</button><button data-value="/" class="operator">÷</button>
+            <button data-value="7">7</button><button data-value="8">8</button><button data-value="9">9</button><button data-value="*" class="operator">×</button>
+            <button data-value="4">4</button><button data-value="5">5</button><button data-value="6">6</button><button data-value="-" class="operator">−</button>
+            <button data-value="1">1</button><button data-value="2">2</button><button data-value="3">3</button><button data-value="+" class="operator">+</button>
+            <button data-value="0" style="grid-column: span 2">0</button><button data-value=".">.</button><button id="calc-equals" class="operator">=</button>
+        </div>
+    </aside>
+
+    <div id="ai-avatar">
+        <img src="https://i.ibb.co/Z62HKrZG/20250701-1749-Friendly-AI-Mascot-simple-compose-01jz469eytf25t839d2t611p8q.png" alt="SchoolSync AI Avatar">
+        <div id="avatar-speech-bubble" class="hidden"></div>
+    </div>
+    
+    <div id="text-selection-popup" class="hidden">
+        <button type="button" title="Expand on this"><i class="ph-fill ph-sparkle"></i> Expand</button>
+    </div>
+
+    <div id="tos-modal-overlay" class="modal-overlay hidden">
+        <div class="modal-box tos-modal">
+            <div class="modal-header"><h4>Terms of Service</h4></div>
+            <div class="tos-content"><p>Welcome to SchoolSyncAI...</p></div>
+            <div class="modal-actions"><button id="tos-decline-btn" class="styled-button secondary">Decline</button><button id="tos-accept-btn" class="styled-button">Accept</button></div>
+        </div>
+    </div>
+
+    <div id="app-blocked-overlay" class="modal-overlay hidden">
+        <div class="modal-box"><h4>Access Denied</h4><p>You must accept the Terms of Service...</p><button id="view-tos-btn" class="modal-close-btn">View Terms</button></div>
+    </div>
+
+    <div id="modal-beta-warning" class="modal-overlay hidden">
+        <div class="modal-box modal-beta">
+            <div class="modal-header">
+                <i class="ph-fill ph-flask icon"></i>
+                <h4>Beta Feature</h4>
+            </div>
+            <p>The AI Quiz Generator is experimental. Questions and answers may not always be perfect. Please use it as a study aid, not a definitive source.</p>
+            <button id="modal-beta-close-btn" class="modal-close-btn">I Understand</button>
+        </div>
+    </div>
+
+    <div id="save-deck-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+             <div class="modal-header">
+                <h4 class="modal-title">Save New Deck</h4>
+                <button class="modal-close-icon">×</button>
+            </div>
+            <div class="modal-content-area">
+                <form id="save-deck-form">
+                    <div class="form-group">
+                        <label for="deck-name-input">Deck Name</label>
+                        <input type="text" id="deck-name-input" placeholder="e.g., Photosynthesis Basics" required>
+                    </div>
+                    <div class="form-actions">
+                         <button type="submit" class="styled-button">Save Deck</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="my-decks-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h4 class="modal-title">My Saved Decks</h4>
+                <button class="modal-close-icon">×</button>
+            </div>
+            <div id="decks-list" class="modal-content-area">
+                <!-- Deck list will be populated dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+             <div class="modal-header">
+                <h4 class="modal-title">User Settings</h4>
+                <button class="modal-close-icon">×</button>
+            </div>
+            <div class="modal-content-area">
+                <!-- FIX: Changed to multipart/form-data for file uploads -->
+                <form id="settings-form" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="username-input">Custom Username</label>
+                        <input type="text" id="username-input" name="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="pfp-file-input">Profile Picture</label>
+                        <input type="file" id="pfp-file-input" name="pfp-file" accept="image/*">
+                    </div>
+                    <div class="form-actions">
+                         <button type="submit" class="styled-button">Save Settings</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <template id="chat-message-template">
+        <div class="message">
+            <div class="copy-content">
+                <strong></strong>
+                <div class="content"></div>
+            </div>
+        </div>
+    </template>
+    
+    <template id="deck-item-template">
+        <div class="deck-item">
+            <span class="deck-name"></span>
+            <div class="deck-actions">
+                <button class="styled-button study-btn">Study</button>
+                <button class="styled-button secondary delete-btn" title="Delete Deck"><i class="ph-fill ph-trash"></i></button>
+            </div>
+        </div>
+    </template>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

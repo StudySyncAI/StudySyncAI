@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en" class="dark-mode">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Login - SchoolSync AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <style>
+        .google-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            width: 100%;
+            padding: 0.9rem;
+            font-size: 1rem;
+            background-color: #fff;
+            color: #444;
+            border: 1px solid #ddd;
+            border-radius: 50px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .google-btn:hover {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        .google-btn img {
+            width: 20px;
+            height: 20px;
+        }
+        .login-info { text-align: center; color: var(--text-muted-color); font-size: 0.9rem; margin-top: 1.5rem; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="container" style="max-width: 450px;">
+            <header>
+                <a href="/" class="logo">
+                    <img src="https://i.ibb.co/mVbFmyCX/20250630-2107-School-Sync-AI-Logo-Design-remix-01jz1z4r23e3dbpjgwmdcsqpkz.png" alt="SchoolSync AI Logo"/>
+                </a>
+            </header>
+            <main>
+                <h3 style="margin-bottom: 2rem;">Welcome to SchoolSyncAI</h3>
+                <a href="{{ url_for('login') }}" class="google-btn">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google logo"/>
+                    <span>Sign in with Google</span>
+                </a>
+                <p class="login-info">Log in to access your ultimate study partner.</p>
+            </main>
+        </div>
+    </div>
+</body>
+</html>
