@@ -1,7 +1,7 @@
 import os
 import re
 import fitz  # PyMuPDF
-from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for, abort
+from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for, flash
 from dotenv import load_dotenv
 from groq import Groq
 import logging
@@ -12,29 +12,26 @@ from authlib.integrations.flask_client import OAuth
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 from werkzeug.utils import secure_filename
+from PIL import Image
+import uuid
+import requests
 
 # --- 1. INITIAL SETUP & CONFIGURATION ---
 load_dotenv()
 app = Flask(__name__)
 
 app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY")
-if not app.config['SECRET_KEY']:
-    raise ValueError("No FLASK_SECRET_KEY set in .env file.")
-
 app.config['GOOGLE_CLIENT_ID'] = os.environ.get("GOOGLE_CLIENT_ID")
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get("GOOGLE_CLIENT_SECRET")
-if not app.config['GOOGLE_CLIENT_ID'] or not app.config['GOOGLE_CLIENT_SECRET']:
-    raise ValueError("Google OAuth credentials not found in .env file.")
+SITE_PASSWORD = os.environ.get("SITE_PASSWORD")
+SERPER_API_KEY = os.environ.get("SERPER_API_KEY")
 
-# NEW: Site-wide password and PFP upload config
-SITE_WIDE_PASSWORD = os.environ.get("SITE_WIDE_PASSWORD")
-if not SITE_WIDE_PASSWORD:
-    raise ValueError("SITE_WIDE_PASSWORD not set in .env file.")
-
-UPLOAD_FOLDER = 'static/uploads/pfps'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+# File upload configuration
+UPLOAD_FOLDER = 'static/pfps'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 # --- DATABASE SETUP ---
 class Base(DeclarativeBase):
@@ -60,7 +57,6 @@ class FlashcardDeck(db.Model):
 
 with app.app_context():
     db.create_all()
-    app.logger.info("Database tables checked and created if necessary.")
 
 # --- Logging setup ---
 logging.basicConfig(level=logging.INFO)
@@ -68,14 +64,31 @@ gunicorn_logger = logging.getLogger('gunicorn.error')
 app.logger.handlers = gunicorn_logger.handlers
 app.logger.setLevel(gunicorn_logger.level)
 
-# --- 2. CONSTANTS, AI CONFIG & DATA LOADING ---
+# --- 2. CONSTANTS & AI CONFIG ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 AI_MODEL = "llama3-8b-8192"
-# (Prompts and other constants remain the same)
-PROMPTS = {
-    "homework_helper": "You are a friendly and encouraging tutor. Explain concepts clearly and guide the user to the answer without just giving it away.",
-    "study_guide_maker": "You are a hyper-organized study guide creator. Take the user's topic and create a concise, well-structured study guide with key points, definitions, and potential questions.",
-    "concept_explainer": "You are a brilliant professor who can explain any concept to a five-year-old using simple analogies and then provide a more detailed explanation for an expert.",
+
+WRITING_SAMPLES = {}
+GRADE_LEVEL_FILES = [
+    'kindergarten', 'grade1', 'grade2', 'grade3', 'grade4', 'grade5', 'grade6', 
+    'grade7', 'grade8', 'grade9', 'grade10', 'grade11', 'grade12', 'college'
+]
+
+for grade_key in GRADE_LEVEL_FILES:
+    try:
+        # Assuming writing samples are in the same directory or a specified path
+        with open(f"{grade_key}.txt", "r", encoding="utf-8") as f:
+            WRITING_SAMPLES[grade_key] = f.read()
+    except FileNotFoundError:
+        app.logger.warning(f"Writing sample file not found: {grade_key}.txt")
+    except Exception as e:
+        app.logger.error(f"Error reading writing sample '{grade_key}.txt': {e}")
+
+
+PROMPTS: Dict[str, str] = {
+    "homework_helper": "You are a friendly and encouraging tutor. Explain concepts clearly and guide the user to the answer without just giving it away. If search results are provided, use them to form your answer.",
+    "study_guide_maker": "You are a hyper-organized study guide creator. Take the user's topic and create a concise, well-structured study guide with key points, definitions, and potential questions. Use the search results to ensure accuracy.",
+    "concept_explainer": "You are a brilliant professor who can explain any concept. Use the provided search results to give an accurate, detailed explanation.",
     "pdf_qa": (
         "You are an expert assistant for questioning documents. Use ONLY the provided context to answer the user's question. "
         "The context will be provided before the question. If the answer cannot be found in the context, you must state: "
@@ -106,19 +119,20 @@ PROMPTS = {
         "   - `options`: A JSON object (dictionary) where keys are capital letters (A, B, C, D) and values are strings.\n"
         "   - `correctAnswer`: The key of the correct option (e.g., 'C').\n"
         "   - `explanation`: A string explaining why the answer is correct.\n"
-        "   *Example:* `{{\"type\": \"multiple_choice\", \"question\": \"What is the capital of France?\", \"options\": {{\"A\": \"Berlin\", \"B\": \"Madrid\", \"C\": \"Paris\"}}, \"correctAnswer\": \"C\", \"explanation\": \"Paris is the capital of France.\"}}`\n\n"
         "**2. Fill-in-the-Blank:**\n"
         "   - `type`: 'fill_in_the_blank'\n"
         "   - `question`: A string containing '___'.\n"
         "   - `correctAnswer`: A string for the blank.\n"
-        "   - `explanation`: A string explanation.\n"
-        "   *Example:* `{{\"type\": \"fill_in_the_blank\", \"question\": \"The Earth revolves around the ___\", \"correctAnswer\": \"Sun\", \"explanation\": \"The Earth is in orbit around the Sun.\"}}`\n\n"
-        "**CRITICAL FINAL STEP: After generating a question, options, and explanation, you MUST re-read your own explanation and verify that the `correctAnswer` key in your JSON output aligns perfectly with the logic and answer you provided in the explanation. This check is mandatory.**"
+        "   - `explanation`: A string explanation."
     )
 }
-client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+DEFAULT_PROMPT = PROMPTS.get("homework_helper", "You are a helpful assistant.")
 
-# --- 3. AUTHENTICATION SETUP ---
+client = None
+if GROQ_API_KEY:
+    client = Groq(api_key=GROQ_API_KEY)
+
+# --- 3. AUTHENTICATION & WRAPPERS ---
 oauth = OAuth(app)
 google = oauth.register(
     name='google',
@@ -128,17 +142,17 @@ google = oauth.register(
     client_kwargs={'scope': 'openid email profile'}
 )
 
-# NEW: Decorator for site-wide password
-def site_password_required(f):
+def password_protected(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'site_authenticated' not in session:
-            return redirect(url_for('enter_password'))
+        if SITE_PASSWORD and 'password_ok' not in session:
+            return redirect(url_for('gate'))
         return f(*args, **kwargs)
     return decorated_function
 
 def login_required(f):
     @wraps(f)
+    @password_protected
     def decorated_function(*args, **kwargs):
         if 'user' not in session:
             if request.headers.get("X-Requested-With") == "XMLHttpRequest":
@@ -149,38 +163,34 @@ def login_required(f):
 
 # --- 4. FLASK ROUTES ---
 
-# NEW: Site password routes
-@app.route('/password', methods=['GET', 'POST'])
-def enter_password():
+@app.route('/gate', methods=['GET', 'POST'])
+def gate():
+    if not SITE_PASSWORD or 'password_ok' in session:
+        return redirect(url_for('login_page'))
+    
     if request.method == 'POST':
-        password = request.form.get('password')
-        if password == SITE_WIDE_PASSWORD:
-            session['site_authenticated'] = True
+        if request.form.get('password') == SITE_PASSWORD:
+            session['password_ok'] = True
             return redirect(url_for('login_page'))
         else:
-            return render_template('password.html', error="Incorrect password.")
-    return render_template('password.html')
+            return render_template('gate.html', error='Incorrect password.')
+    return render_template('gate.html')
 
 @app.route('/')
-@site_password_required
 @login_required
 def home():
-    """Serves the main HTML page."""
-    return render_template('index.html', user=session.get('user'))
-
-@app.route('/login-page')
-@site_password_required
-def login_page():
-    return render_template('login.html')
+    user_id = session['user']['sub']
+    user = db.session.get(User, user_id)
+    return render_template('index.html', user=user)
 
 @app.route('/login')
-@site_password_required
+@password_protected
 def login():
     redirect_uri = url_for('authorize', _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
 
 @app.route('/authorize')
-@site_password_required
+@password_protected
 def authorize():
     token = oauth.google.authorize_access_token()
     user_info = oauth.google.userinfo()
@@ -197,61 +207,99 @@ def authorize():
         )
         db.session.add(user)
     else:
-        user.name = user_info.get('name')
-        if not user.picture or 'googleusercontent' in user.picture:
+        # Only update name/picture if they haven't set a custom one
+        if not user.name:
+            user.name = user_info.get('name')
+        if not user.picture or 'googleusercontent.com' in user.picture:
             user.picture = user_info.get('picture')
     db.session.commit()
-
     return redirect(url_for('home'))
 
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('enter_password'))
+    return redirect(url_for('gate' if SITE_PASSWORD else 'login_page'))
 
-# --- API Routes ---
+@app.route('/login-page')
+@password_protected
+def login_page():
+    if 'user' in session:
+        return redirect(url_for('home'))
+    return render_template('login.html')
+
+# --- API ROUTES ---
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/api/upload-pfp', methods=['POST'])
-@site_password_required
+@app.route('/api/user/pfp', methods=['POST'])
 @login_required
 def upload_pfp():
-    if 'pfp-file' not in request.files:
-        return jsonify(error="No file part"), 400
-    file = request.files['pfp-file']
+    if 'pfp' not in request.files:
+        return jsonify(error="No file part in the request."), 400
+    file = request.files['pfp']
     if file.filename == '':
-        return jsonify(error="No selected file"), 400
+        return jsonify(error="No file selected."), 400
     if file and allowed_file(file.filename):
-        user_id = session['user']['sub']
-        user = db.session.get(User, user_id)
-        if not user:
-            abort(404)
-        
-        filename = secure_filename(f"{user_id}.{file.filename.rsplit('.', 1)[1].lower()}")
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        
-        # We need to use a relative path for the URL
-        url_path = f"/{UPLOAD_FOLDER}/{filename}"
-        user.picture = url_path
-        db.session.commit()
-        
-        return jsonify(success=True, filepath=url_path)
-    return jsonify(error="File type not allowed"), 400
+        try:
+            img = Image.open(file.stream)
+            img.verify()
+            file.seek(0)
 
+            filename = secure_filename(file.filename)
+            ext = filename.rsplit('.', 1)[1].lower()
+            unique_filename = f"{uuid.uuid4()}.{ext}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+            file.save(filepath)
 
-# All other API routes need the decorators too
+            user_id = session['user']['sub']
+            user = db.session.get(User, user_id)
+            if user:
+                if user.picture and os.path.basename(user.picture) != 'default.png' and not 'googleusercontent.com' in user.picture:
+                    old_path = os.path.join(app.config['UPLOAD_FOLDER'], os.path.basename(user.picture))
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+
+                user.picture = url_for('static', filename=f'pfps/{unique_filename}')
+                db.session.commit()
+
+            return jsonify(success=True, new_pfp_url=user.picture)
+        except Exception as e:
+            app.logger.error(f"PFP upload failed: {e}")
+            return jsonify(error="Invalid or corrupt image file."), 400
+    else:
+        return jsonify(error="File type not allowed."), 400
+
+@app.route('/api/user/settings', methods=['POST'])
+@login_required
+def save_settings():
+    data = request.json
+    new_username = data.get('username')
+    user_id = session['user']['sub']
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify(error="User not found"), 404
+    
+    if new_username:
+        user.name = new_username
+    
+    db.session.commit()
+    return jsonify(success=True, new_username=user.name)
+
 @app.route('/api/decks', methods=['POST'])
-@site_password_required
 @login_required
 def save_deck():
     user_id = session['user']['sub']
     data = request.json
+    deck_name = data.get('name')
+    cards_data = data.get('cards')
+
+    if not deck_name or not cards_data:
+        return jsonify({"error": "Deck name and cards data are required."}), 400
+
     new_deck = FlashcardDeck(
-        name=data.get('name'),
-        cards=json.dumps(data.get('cards')),
+        name=deck_name,
+        cards=json.dumps(cards_data),
         user_id=user_id
     )
     db.session.add(new_deck)
@@ -259,7 +307,6 @@ def save_deck():
     return jsonify({"success": True, "id": new_deck.id, "name": new_deck.name}), 201
 
 @app.route('/api/decks', methods=['GET'])
-@site_password_required
 @login_required
 def get_decks():
     user_id = session['user']['sub']
@@ -268,56 +315,90 @@ def get_decks():
     return jsonify(deck_list)
 
 @app.route('/api/decks/<int:deck_id>', methods=['DELETE'])
-@site_password_required
 @login_required
 def delete_deck(deck_id):
     user_id = session['user']['sub']
     deck = db.session.get(FlashcardDeck, deck_id)
-    if not deck or deck.user_id != user_id:
-        abort(404)
+
+    if not deck:
+        return jsonify({"error": "Deck not found."}), 404
+    if deck.user_id != user_id:
+        return jsonify({"error": "Unauthorized."}), 403
+
     db.session.delete(deck)
     db.session.commit()
     return jsonify({"success": True})
-    
-# (Other API routes: ask-stream, generate-content, grade-paper, upload-pdf all remain the same, but now require the decorators)
 
 @app.route('/api/ask-stream', methods=['POST'])
-@site_password_required
 @login_required
 def ask_stream_api():
-    # ... (function logic is unchanged)
     data = request.json
     messages: List[Dict[str, str]] = data.get('messages', [])
     mode = data.get('mode', 'homework_helper')
     pdf_context = data.get('pdf_context')
+
     if not client:
         return Response(json.dumps({"error": "AI service is not configured."}), status=503, mimetype='application/json')
     if not messages:
         return Response(json.dumps({"error": "No question provided."}), status=400, mimetype='application/json')
-    system_prompt = PROMPTS.get(mode, PROMPTS["homework_helper"])
+
+    system_prompt = PROMPTS.get(mode, DEFAULT_PROMPT)
+    last_user_message = messages[-1]
+
+    web_search_context = ""
+    modes_that_need_web_search = ['homework_helper', 'study_guide_maker', 'concept_explainer']
+    
+    if mode in modes_that_need_web_search and SERPER_API_KEY:
+        try:
+            app.logger.info(f"Performing web search for query: {last_user_message['content']}")
+            headers = { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }
+            payload = json.dumps({ "q": last_user_message['content'] })
+            response = requests.post("https://google.serper.dev/search", headers=headers, data=payload, timeout=5)
+            response.raise_for_status()
+            
+            search_results = response.json()
+            
+            web_search_context += "--- Web Search Results (for context) ---\n"
+            if search_results.get('answerBox'):
+                web_search_context += f"Answer Box: {search_results['answerBox']['snippet']}\n"
+            for result in search_results.get('organic', [])[:4]:
+                web_search_context += f"Title: {result['title']}\nSnippet: {result['snippet']}\n---\n"
+            app.logger.info(f"Web search context generated: {len(web_search_context)} chars")
+        except requests.exceptions.RequestException as e:
+            app.logger.error(f"Serper API request failed: {e}")
+            web_search_context = "--- Web Search Failed ---\n"
+
+    final_system_prompt = system_prompt
     if mode == 'pdf_qa' and pdf_context:
-        last_user_message = messages[-1]
         last_user_message['content'] = f"CONTEXT:\n'''\n{pdf_context}\n'''\n\nQUESTION: {last_user_message['content']}"
-    full_message_payload = [{"role": "system", "content": system_prompt}] + messages
+    elif web_search_context:
+        final_system_prompt = f"{web_search_context}\n\n{system_prompt}"
+
+    full_message_payload = [{"role": "system", "content": final_system_prompt}] + messages
+    
     def generate_stream():
         try:
-            stream = client.chat.completions.create(model=AI_MODEL, messages=full_message_payload, stream=True, temperature=0.7)
+            stream = client.chat.completions.create(
+                model=AI_MODEL, 
+                messages=full_message_payload, 
+                stream=True, 
+                temperature=0.7
+            )
             for chunk in stream:
                 content = chunk.choices[0].delta.content
                 if content:
                     data_to_send = json.dumps({"token": content})
                     yield f"data: {data_to_send}\n\n"
         except Exception as e:
-            app.logger.error(f"Stream error: {e}", exc_info=True)
-            error_data = json.dumps({"error": "An error occurred during the stream."})
+            app.logger.error(f"Groq stream error: {e}", exc_info=True)
+            error_data = json.dumps({"error": "An error occurred during the AI stream."})
             yield f"data: {error_data}\n\n"
+            
     return Response(generate_stream(), mimetype='text/event-stream')
     
 @app.route('/api/generate-content', methods=['POST'])
-@site_password_required
 @login_required
 def generate_content_api():
-    # ... (function logic is unchanged)
     if not client: return jsonify({"error": "AI service is not configured."}), 503
     data = request.json
     mode = data.get('mode'); topic = data.get('topic'); count = data.get('count', 5) 
@@ -360,17 +441,15 @@ def generate_content_api():
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
 @app.route('/api/grade-paper', methods=['POST'])
-@site_password_required
 @login_required
 def grade_paper_api():
-    # ... (function logic is unchanged)
     if not client: return jsonify({"error": "AI service is not configured."}), 503
+    if not WRITING_SAMPLES: return jsonify({"error": "Writing samples are not loaded, cannot grade paper."}), 500
     data = request.json
     grade_level = data.get('grade_level'); paper_type = data.get('paper_type'); paper_text = data.get('paper_text')
     if not all([grade_level, paper_type, paper_text]): return jsonify({"error": "Missing grade level, paper type, or paper text."}), 400
     grade_key = grade_level.replace(" ", "").lower()
-    writing_sample = WRITING_SAMPLES.get(grade_key)
-    if not writing_sample: return jsonify({"error": f"No writing sample for {grade_level}."}), 404
+    writing_sample = WRITING_SAMPLES.get(grade_key, "No sample available.")
     prompt_template = PROMPTS["paper_grader"]
     system_prompt = prompt_template.format(grade_level=grade_level, paper_type=paper_type, paper_text=paper_text, writing_sample=writing_sample)
     try:
@@ -385,10 +464,8 @@ def grade_paper_api():
         return jsonify({"error": "An unexpected error occurred while grading."}), 500
 
 @app.route('/api/upload-pdf', methods=['POST'])
-@site_password_required
 @login_required
 def upload_pdf_api():
-    # ... (function logic is unchanged)
     if 'pdf-file' not in request.files: return jsonify({"error": "No file part in the request."}), 400
     file = request.files['pdf-file']
     if not file or file.filename == '': return jsonify({"error": "No file selected."}), 400
@@ -399,7 +476,9 @@ def upload_pdf_api():
         full_text = "".join(page.get_text() for page in pdf_document)
         pdf_document.close()
         if not full_text.strip():
+            app.logger.warning(f"PDF '{file.filename}' contains no extractable text.")
             return jsonify({"error": "PDF is empty or contains only images."}), 400
+        app.logger.info(f"✅ Extracted {len(full_text)} characters from '{file.filename}'.")
         return jsonify({"success": True, "filename": file.filename, "pdf_context": full_text})
     except Exception as e:
         app.logger.error(f"!!! PDF processing failed for '{file.filename}': {e}", exc_info=True)
