@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/showdown/2.1.0/showdown.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
-<body data-user-id="{{ user.sub }}" data-user-name="{{ user.name }}" data-user-picture="{{ user.picture }}">
+<body data-user-id="{{ user.id }}" data-user-name="{{ user.name }}" data-user-picture="{{ user.picture }}">
     <div id="app-container">
         <div class="container">
             <header class="main-header">
@@ -32,7 +32,7 @@
                         <div class="profile-dropdown" id="profile-dropdown">
                             <div class="profile-info">
                                 <strong id="profile-name-header">{{ user.name }}</strong>
-                                <span>{{ user.email }}</span>
+                                <span id="profile-email-header">{{ user.email }}</span>
                             </div>
                             <a href="#" class="profile-dropdown-link" id="my-decks-btn">
                                 <i class="ph-fill ph-cards"></i> My Decks
@@ -233,13 +233,71 @@
     <div id="tos-modal-overlay" class="modal-overlay hidden">
         <div class="modal-box tos-modal">
             <div class="modal-header"><h4>Terms of Service</h4></div>
-            <div class="tos-content"><p>Welcome to SchoolSyncAI...</p></div>
-            <div class="modal-actions"><button id="tos-decline-btn" class="styled-button secondary">Decline</button><button id="tos-accept-btn" class="styled-button">Accept</button></div>
+            <!-- FIX: Replaced placeholder with a professional ToS -->
+            <div class="tos-content">
+                <p><em>Last Updated: October 26, 2023</em></p>
+                
+                <section>
+                    <h4>1. Acceptance of Terms</h4>
+                    <p>By accessing or using SchoolSync AI (the "Service"), you agree to be bound by these Terms of Service ("Terms"). If you disagree with any part of the terms, you may not access the Service.</p>
+                </section>
+
+                <section>
+                    <h4>2. Description of Service</h4>
+                    <p>SchoolSync AI is an AI-powered platform providing tools such as homework assistance, study guide creation, paper grading, and interactive quizzes ("AI-Generated Content"). The Service is intended as a study aid and is not a substitute for professional academic instruction or guidance.</p>
+                </section>
+
+                <section>
+                    <h4>3. User Conduct</h4>
+                    <p>You are responsible for your conduct and any data, text, or information you upload or share ("User Content"). You agree not to misuse the Service for activities such as:</p>
+                    <ul>
+                        <li>Engaging in any illegal activities.</li>
+                        <li>Attempting to reverse-engineer, decompile, or otherwise discover the source code of the Service.</li>
+                        <li>Submitting content that infringes on the intellectual property rights of others.</li>
+                        <li>Using the service for any form of academic dishonesty as defined by your institution.</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h4>4. Content Ownership and Responsibility</h4>
+                    <p><strong>Your Content:</strong> You retain all ownership rights to the User Content you create and submit to the Service. By using the Service, you grant SchoolSync AI a limited, worldwide, non-exclusive license to use, reproduce, modify, and display your User Content solely for the purpose of operating and providing the Service to you.</p>
+                    <p><strong>AI-Generated Content:</strong> The AI-Generated Content is provided on an "as is" and "as available" basis. <strong>We make no warranties or representations regarding the accuracy, completeness, or reliability of any AI-Generated Content.</strong> You are solely responsible for verifying the information and using it appropriately for your academic needs.</p>
+                </section>
+
+                <section>
+                    <h4>5. Disclaimer of Warranties</h4>
+                    <p>The Service is provided without warranties of any kind, whether express or implied. SchoolSync AI does not warrant that the Service will be uninterrupted, secure, or free from errors or inaccuracies. Your use of the Service is at your sole risk.</p>
+                </section>
+
+                <section>
+                    <h4>6. Limitation of Liability</h4>
+                    <p>In no event shall SchoolSync AI, nor its directors, employees, or partners, be liable for any indirect, incidental, special, consequential, or punitive damages, including without limitation, loss of profits, data, or other intangible losses, resulting from your use of the Service or your reliance on any AI-Generated Content.</p>
+                </section>
+
+                <section>
+                    <h4>7. Termination</h4>
+                    <p>We may terminate or suspend your access to the Service immediately, without prior notice or liability, for any reason whatsoever, including without limitation if you breach the Terms.</p>
+                </section>
+
+                <section>
+                    <h4>8. Changes to Terms</h4>
+                    <p>We reserve the right, at our sole discretion, to modify or replace these Terms at any time. We will provide notice of any changes by posting the new Terms on this page.</p>
+                </section>
+
+                <section>
+                    <h4>9. Contact Us</h4>
+                    <p>If you have any questions about these Terms, please contact us at contact.schoolsync@example.com.</p>
+                </section>
+            </div>
+            <div class="modal-actions">
+                <button id="tos-decline-btn" class="styled-button secondary">Decline</button>
+                <button id="tos-accept-btn" class="styled-button">Accept</button>
+            </div>
         </div>
     </div>
 
     <div id="app-blocked-overlay" class="modal-overlay hidden">
-        <div class="modal-box"><h4>Access Denied</h4><p>You must accept the Terms of Service...</p><button id="view-tos-btn" class="modal-close-btn">View Terms</button></div>
+        <div class="modal-box"><h4>Access Denied</h4><p>You must accept the Terms of Service to use SchoolSync AI. Please reload the page to view the terms again.</p></div>
     </div>
 
     <div id="modal-beta-warning" class="modal-overlay hidden">
@@ -292,15 +350,20 @@
                 <button class="modal-close-icon">×</button>
             </div>
             <div class="modal-content-area">
-                <!-- FIX: Changed to multipart/form-data for file uploads -->
-                <form id="settings-form" enctype="multipart/form-data">
+                <form id="settings-form">
                     <div class="form-group">
                         <label for="username-input">Custom Username</label>
-                        <input type="text" id="username-input" name="username">
+                        <input type="text" id="username-input" placeholder="Enter a new username">
                     </div>
                     <div class="form-group">
-                        <label for="pfp-file-input">Profile Picture</label>
-                        <input type="file" id="pfp-file-input" name="pfp-file" accept="image/*">
+                        <label>Profile Picture</label>
+                        <div id="pfp-upload-group">
+                            <img src="" alt="Current profile picture" class="profile-pic" id="pfp-preview-settings">
+                             <label for="pfp-file-input" class="file-input-label">
+                                <span class="styled-button secondary">Choose Image...</span>
+                                <input type="file" id="pfp-file-input" accept="image/*">
+                             </label>
+                        </div>
                     </div>
                     <div class="form-actions">
                          <button type="submit" class="styled-button">Save Settings</button>
