@@ -1,12 +1,12 @@
 import os
 import re
 import fitz  # PyMuPDF
-from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 from dotenv import load_dotenv
 from groq import Groq
 import logging
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List
 from functools import wraps
 from authlib.integrations.flask_client import OAuth
 from flask_sqlalchemy import SQLAlchemy
@@ -20,13 +20,12 @@ import requests
 load_dotenv()
 app = Flask(__name__)
 
-app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY")
+app.config['SECRET_KEY'] = os.environ.get("FLASK_SECRET_KEY", "a_default_secret_key_for_testing")
 app.config['GOOGLE_CLIENT_ID'] = os.environ.get("GOOGLE_CLIENT_ID")
 app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get("GOOGLE_CLIENT_SECRET")
 SITE_PASSWORD = os.environ.get("SITE_PASSWORD")
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY")
 
-# File upload configuration
 UPLOAD_FOLDER = 'static/pfps'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -35,8 +34,7 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 # --- DATABASE SETUP ---
 class Base(DeclarativeBase):
-  pass
-
+    pass
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///schoolsync.db"
 db = SQLAlchemy(model_class=Base)
 db.init_app(app)
@@ -61,8 +59,9 @@ with app.app_context():
 # --- Logging setup ---
 logging.basicConfig(level=logging.INFO)
 gunicorn_logger = logging.getLogger('gunicorn.error')
-app.logger.handlers = gunicorn_logger.handlers
-app.logger.setLevel(gunicorn_logger.level)
+if gunicorn_logger.handlers:
+    app.logger.handlers = gunicorn_logger.handlers
+    app.logger.setLevel(gunicorn_logger.level)
 
 # --- 2. CONSTANTS & AI CONFIG ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -76,7 +75,6 @@ GRADE_LEVEL_FILES = [
 
 for grade_key in GRADE_LEVEL_FILES:
     try:
-        # Assuming writing samples are in the same directory or a specified path
         with open(f"{grade_key}.txt", "r", encoding="utf-8") as f:
             WRITING_SAMPLES[grade_key] = f.read()
     except FileNotFoundError:
@@ -132,7 +130,7 @@ client = None
 if GROQ_API_KEY:
     client = Groq(api_key=GROQ_API_KEY)
 
-# --- 3. AUTHENTICATION & WRAPPERS ---
+# --- 3. AUTHENTICATION SETUP ---
 oauth = OAuth(app)
 google = oauth.register(
     name='google',
@@ -142,149 +140,113 @@ google = oauth.register(
     client_kwargs={'scope': 'openid email profile'}
 )
 
-def password_protected(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if SITE_PASSWORD and 'password_ok' not in session:
-            return redirect(url_for('gate'))
-        return f(*args, **kwargs)
-    return decorated_function
-
+# --- DECORATORS ---
 def login_required(f):
     @wraps(f)
-    @password_protected
     def decorated_function(*args, **kwargs):
         if 'user' not in session:
-            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                return jsonify(error="Unauthorized. Please log in again."), 401
-            return redirect(url_for('login_page'))
+            return redirect(url_for('login_gate'))
         return f(*args, **kwargs)
     return decorated_function
 
-# --- 4. FLASK ROUTES ---
-
-@app.route('/gate', methods=['GET', 'POST'])
-def gate():
-    if not SITE_PASSWORD or 'password_ok' in session:
-        return redirect(url_for('login_page'))
-    
-    if request.method == 'POST':
-        if request.form.get('password') == SITE_PASSWORD:
-            session['password_ok'] = True
-            return redirect(url_for('login_page'))
-        else:
-            return render_template('gate.html', error='Incorrect password.')
-    return render_template('gate.html')
+# --- 4. ROUTES ---
 
 @app.route('/')
-@login_required
-def home():
-    user_id = session['user']['sub']
-    user = db.session.get(User, user_id)
-    return render_template('index.html', user=user)
+def login_gate():
+    if 'user' in session:
+        return redirect(url_for('dashboard'))
+    return render_template('login.html', show_password_form=bool(SITE_PASSWORD))
+
+@app.route('/verify-password', methods=['POST'])
+def verify_password():
+    password = request.json.get('password')
+    if password == SITE_PASSWORD:
+        session['password_verified'] = True
+        return jsonify({'success': True})
+    else:
+        return jsonify({'success': False}), 401
 
 @app.route('/login')
-@password_protected
 def login():
+    if SITE_PASSWORD and not session.get('password_verified'):
+        return redirect(url_for('login_gate'))
     redirect_uri = url_for('authorize', _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
 
 @app.route('/authorize')
-@password_protected
 def authorize():
     token = oauth.google.authorize_access_token()
     user_info = oauth.google.userinfo()
+    
+    session.pop('password_verified', None)
     session['user'] = user_info
     
-    user_id = user_info.get('sub')
-    user = db.session.get(User, user_id)
+    user = User.query.get(user_info['sub'])
     if not user:
-        user = User(
-            id=user_id,
-            email=user_info.get('email'),
-            name=user_info.get('name'),
-            picture=user_info.get('picture')
-        )
+        user = User(id=user_info['sub'], email=user_info.get('email'), name=user_info.get('name'), picture=user_info.get('picture'))
         db.session.add(user)
     else:
-        # Only update name/picture if they haven't set a custom one
-        if not user.name:
-            user.name = user_info.get('name')
-        if not user.picture or 'googleusercontent.com' in user.picture:
-            user.picture = user_info.get('picture')
+        if not user.name: user.name = user_info.get('name')
+        if not user.picture or 'googleusercontent.com' in user.picture: user.picture = user_info.get('picture')
     db.session.commit()
-    return redirect(url_for('home'))
+    
+    return redirect(url_for('dashboard'))
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    user = User.query.get(session['user']['sub'])
+    return render_template('index.html', user=user)
 
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('gate' if SITE_PASSWORD else 'login_page'))
+    return redirect(url_for('login_gate'))
 
-@app.route('/login-page')
-@password_protected
-def login_page():
-    if 'user' in session:
-        return redirect(url_for('home'))
-    return render_template('login.html')
-
-# --- API ROUTES ---
-
+# --- 5. API ROUTES ---
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/api/user/pfp', methods=['POST'])
-@login_required
-def upload_pfp():
-    if 'pfp' not in request.files:
-        return jsonify(error="No file part in the request."), 400
-    file = request.files['pfp']
-    if file.filename == '':
-        return jsonify(error="No file selected."), 400
-    if file and allowed_file(file.filename):
-        try:
-            img = Image.open(file.stream)
-            img.verify()
-            file.seek(0)
-
-            filename = secure_filename(file.filename)
-            ext = filename.rsplit('.', 1)[1].lower()
-            unique_filename = f"{uuid.uuid4()}.{ext}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-            file.save(filepath)
-
-            user_id = session['user']['sub']
-            user = db.session.get(User, user_id)
-            if user:
-                if user.picture and os.path.basename(user.picture) != 'default.png' and not 'googleusercontent.com' in user.picture:
-                    old_path = os.path.join(app.config['UPLOAD_FOLDER'], os.path.basename(user.picture))
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
-
-                user.picture = url_for('static', filename=f'pfps/{unique_filename}')
-                db.session.commit()
-
-            return jsonify(success=True, new_pfp_url=user.picture)
-        except Exception as e:
-            app.logger.error(f"PFP upload failed: {e}")
-            return jsonify(error="Invalid or corrupt image file."), 400
-    else:
-        return jsonify(error="File type not allowed."), 400
-
 @app.route('/api/user/settings', methods=['POST'])
 @login_required
-def save_settings():
-    data = request.json
-    new_username = data.get('username')
+def update_user_settings():
     user_id = session['user']['sub']
     user = db.session.get(User, user_id)
     if not user:
         return jsonify(error="User not found"), 404
-    
+    new_username = request.form.get('username')
     if new_username:
-        user.name = new_username
-    
+        user.name = new_username.strip()
+    new_pfp_url = None
+    if 'profile_picture' in request.files:
+        file = request.files['profile_picture']
+        if file and file.filename != '' and allowed_file(file.filename):
+            try:
+                img = Image.open(file.stream)
+                img.verify()
+                file.seek(0)
+                ext = file.filename.rsplit('.', 1)[1].lower()
+                unique_filename = f"{user_id}_{uuid.uuid4()}.{ext}"
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(unique_filename))
+                
+                img = Image.open(file.stream)
+                img.thumbnail((256, 256))
+                img.save(filepath)
+
+                if user.picture and os.path.basename(user.picture) != 'default.png' and 'googleusercontent.com' not in user.picture:
+                    old_path = os.path.join(os.getcwd(), user.picture.lstrip('/'))
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+
+                new_pfp_url = url_for('static', filename=f'pfps/{unique_filename}')
+                user.picture = new_pfp_url
+            
+            except Exception as e:
+                app.logger.error(f"PFP upload failed for user {user_id}: {e}")
+                db.session.rollback()
+                return jsonify(error="Image upload failed. The file might be corrupt."), 400
     db.session.commit()
-    return jsonify(success=True, new_username=user.name)
+    return jsonify({"success": True, "new_username": user.name, "new_pfp_url": new_pfp_url}), 200
 
 @app.route('/api/decks', methods=['POST'])
 @login_required
@@ -293,15 +255,9 @@ def save_deck():
     data = request.json
     deck_name = data.get('name')
     cards_data = data.get('cards')
-
     if not deck_name or not cards_data:
         return jsonify({"error": "Deck name and cards data are required."}), 400
-
-    new_deck = FlashcardDeck(
-        name=deck_name,
-        cards=json.dumps(cards_data),
-        user_id=user_id
-    )
+    new_deck = FlashcardDeck(name=deck_name, cards=json.dumps(cards_data), user_id=user_id)
     db.session.add(new_deck)
     db.session.commit()
     return jsonify({"success": True, "id": new_deck.id, "name": new_deck.name}), 201
@@ -319,12 +275,10 @@ def get_decks():
 def delete_deck(deck_id):
     user_id = session['user']['sub']
     deck = db.session.get(FlashcardDeck, deck_id)
-
     if not deck:
         return jsonify({"error": "Deck not found."}), 404
     if deck.user_id != user_id:
         return jsonify({"error": "Unauthorized."}), 403
-
     db.session.delete(deck)
     db.session.commit()
     return jsonify({"success": True})
@@ -355,15 +309,12 @@ def ask_stream_api():
             payload = json.dumps({ "q": last_user_message['content'] })
             response = requests.post("https://google.serper.dev/search", headers=headers, data=payload, timeout=5)
             response.raise_for_status()
-            
             search_results = response.json()
-            
             web_search_context += "--- Web Search Results (for context) ---\n"
             if search_results.get('answerBox'):
                 web_search_context += f"Answer Box: {search_results['answerBox']['snippet']}\n"
             for result in search_results.get('organic', [])[:4]:
                 web_search_context += f"Title: {result['title']}\nSnippet: {result['snippet']}\n---\n"
-            app.logger.info(f"Web search context generated: {len(web_search_context)} chars")
         except requests.exceptions.RequestException as e:
             app.logger.error(f"Serper API request failed: {e}")
             web_search_context = "--- Web Search Failed ---\n"
@@ -378,21 +329,14 @@ def ask_stream_api():
     
     def generate_stream():
         try:
-            stream = client.chat.completions.create(
-                model=AI_MODEL, 
-                messages=full_message_payload, 
-                stream=True, 
-                temperature=0.7
-            )
+            stream = client.chat.completions.create(model=AI_MODEL, messages=full_message_payload, stream=True, temperature=0.7)
             for chunk in stream:
                 content = chunk.choices[0].delta.content
                 if content:
-                    data_to_send = json.dumps({"token": content})
-                    yield f"data: {data_to_send}\n\n"
+                    yield f"data: {json.dumps({'token': content})}\n\n"
         except Exception as e:
             app.logger.error(f"Groq stream error: {e}", exc_info=True)
-            error_data = json.dumps({"error": "An error occurred during the AI stream."})
-            yield f"data: {error_data}\n\n"
+            yield f"data: {json.dumps({'error': 'An error occurred during the AI stream.'})}\n\n"
             
     return Response(generate_stream(), mimetype='text/event-stream')
     
@@ -484,6 +428,6 @@ def upload_pdf_api():
         app.logger.error(f"!!! PDF processing failed for '{file.filename}': {e}", exc_info=True)
         return jsonify({"error": "Failed to process the PDF file. It may be corrupt or protected."}), 500
 
-# --- 5. RUN THE APPLICATION ---
+# --- 6. RUN THE APPLICATION ---
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
