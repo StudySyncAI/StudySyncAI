@@ -9,6 +9,19 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
     <style>
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            width: 100%;
+            padding: 1rem;
+        }
+        .login-box {
+            max-width: 450px;
+            width: 100%;
+            text-align: center;
+        }
         .google-btn {
             display: inline-flex;
             align-items: center;
@@ -32,26 +45,103 @@
             width: 20px;
             height: 20px;
         }
-        .login-info { text-align: center; color: var(--text-muted-color); font-size: 0.9rem; margin-top: 1.5rem; }
+        .password-form-group {
+            margin-bottom: 1.5rem;
+        }
+        .password-input {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background-color: var(--container-bg);
+            color: var(--text-color);
+            font-size: 1rem;
+        }
+        .password-submit-btn {
+            background-color: var(--primary-color);
+            border: none;
+            color: white;
+            padding: 0.8rem 1.5rem;
+            width: 100%;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+        .error-message {
+            color: var(--danger-color);
+            margin-top: 1rem;
+            font-weight: 500;
+            min-height: 1.2em;
+        }
     </style>
 </head>
 <body>
     <div class="login-container">
-        <div class="container" style="max-width: 450px;">
+        <div class="container login-box">
             <header>
                 <a href="/" class="logo">
-                    <img src="https://i.ibb.co/mVbFmyCX/20250630-2107-School-Sync-AI-Logo-Design-remix-01jz1z4r23e3dbpjgwmdcsqpkz.png" alt="SchoolSync AI Logo"/>
+                    <img src="https://i.ibb.co/mVbFmyCX/20250630-2107-School-Sync_AI_Logo_Design_remix-01jz1z4r23e3dbpjgwmdcsqpkz.png" alt="SchoolSync AI Logo"/>
                 </a>
             </header>
             <main>
-                <h3 style="margin-bottom: 2rem;">Welcome to SchoolSyncAI</h3>
-                <a href="{{ url_for('login') }}" class="google-btn">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google logo"/>
-                    <span>Sign in with Google</span>
-                </a>
-                <p class="login-info">Log in to access your ultimate study partner.</p>
+                <div id="auth-section">
+                    <div id="password-wrapper" {% if not show_password_form %}style="display: none;"{% endif %}>
+                        <h3 style="margin-bottom: 1.5rem;">Access Required</h3>
+                        <form id="password-form">
+                            <div class="password-form-group">
+                                <input type="password" id="password-input" class="password-input" placeholder="Enter Site Password" required>
+                            </div>
+                            <button type="submit" class="password-submit-btn">Enter</button>
+                        </form>
+                        <p id="password-error" class="error-message"></p>
+                    </div>
+                    <div id="google-login-wrapper" {% if show_password_form %}style="display: none;"{% endif %}>
+                        <h3 style="margin-bottom: 2rem;">Welcome to SchoolSyncAI</h3>
+                        <a href="{{ url_for('login') }}" class="google-btn">
+                            <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google logo"/>
+                            <span>Sign in with Google</span>
+                        </a>
+                    </div>
+                </div>
             </main>
         </div>
     </div>
+    <script>
+        const passwordForm = document.getElementById('password-form');
+        if (passwordForm) {
+            passwordForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const passwordInput = document.getElementById('password-input');
+                const passwordError = document.getElementById('password-error');
+                const submitButton = passwordForm.querySelector('button');
+                submitButton.disabled = true;
+                submitButton.textContent = 'Verifying...';
+                passwordError.textContent = '';
+                try {
+                    const response = await fetch('/verify-password', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ password: passwordInput.value })
+                    });
+                    if (response.ok) {
+                        document.getElementById('password-wrapper').style.display = 'none';
+                        document.getElementById('google-login-wrapper').style.display = 'block';
+                    } else {
+                        passwordError.textContent = 'Incorrect password. Please try again.';
+                        passwordInput.focus();
+                    }
+                } catch (error) {
+                    passwordError.textContent = 'An error occurred. Please check your connection.';
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Enter';
+                    passwordInput.value = '';
+                }
+            });
+        }
+    </script>
 </body>
 </html>

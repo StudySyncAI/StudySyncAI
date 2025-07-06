@@ -619,53 +619,82 @@ document.addEventListener('DOMContentLoaded', () => {
             profileDropdown.classList.toggle('active');
         });
     }
+
     document.addEventListener('click', (e) => {
         if (profileDropdown && profileDropdown.classList.contains('active') && !profileContainer.contains(e.target)) {
             profileDropdown.classList.remove('active');
         }
     });
 
-    if (settingsBtn) settingsBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        showModal(settingsModal);
-    });
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('username-input').value = userName;
+            document.getElementById('pfp-preview-settings').src = userPicture;
+            const pfpFileInput = document.getElementById('pfp-file-input');
+            if(pfpFileInput) pfpFileInput.value = '';
+            showModal(settingsModal);
+        });
+    }
 
-    if (settingsForm) settingsForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const formData = new FormData(settingsForm);
-        const newUsername = formData.get('username').trim();
-        const pfpFile = formData.get('pfp-file');
+    const pfpFileInputSettings = document.getElementById('pfp-file-input');
+    const pfpPreviewSettings = document.getElementById('pfp-preview-settings');
 
-        // Handle username update
-        if (newUsername && newUsername !== userName) {
-            userName = newUsername;
-            localStorage.setItem(`schoolsync_username_${userId}`, newUsername);
-            document.getElementById('profile-name-header').textContent = newUsername;
-        }
-
-        // Handle PFP upload
-        if (pfpFile && pfpFile.size > 0) {
-            const pfpFormData = new FormData();
-            pfpFormData.append('pfp-file', pfpFile);
-
-            const res = await secureFetch('/api/upload-pfp', {
-                method: 'POST',
-                body: pfpFormData
-            });
-
-            if (res && res.ok) {
-                const data = await res.json();
-                userPicture = data.filepath;
-                localStorage.setItem(`schoolsync_pfp_${userId}`, userPicture);
-                document.getElementById('profile-pic-header').src = userPicture;
-            } else {
-                alert('Profile picture upload failed.');
+    if (pfpFileInputSettings) {
+        pfpFileInputSettings.addEventListener('change', () => {
+            const file = pfpFileInputSettings.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    pfpPreviewSettings.src = e.target.result;
+                }
+                reader.readAsDataURL(file);
             }
-        }
-        
-        hideModal(settingsModal);
-        showAvatarMessage("Settings saved!", 3000);
-    });
+        });
+    }
+
+    if (settingsForm) {
+        settingsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(settingsForm);
+            const saveButton = settingsForm.querySelector('button[type="submit"]');
+            saveButton.disabled = true;
+            saveButton.textContent = 'Saving...';
+
+            try {
+                const res = await secureFetch('/api/user/settings', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (res && res.ok) {
+                    const data = await res.json();
+                    
+                    userName = data.new_username;
+                    localStorage.setItem(`schoolsync_username_${userId}`, userName);
+                    document.getElementById('profile-name-header').textContent = userName;
+                    
+                    if (data.new_pfp_url) {
+                        userPicture = data.new_pfp_url;
+                        localStorage.setItem(`schoolsync_pfp_${userId}`, userPicture);
+                        document.getElementById('profile-pic-header').src = userPicture;
+                    }
+                    
+                    hideModal(settingsModal);
+                    showAvatarMessage("Settings saved successfully!", 3000);
+                } else {
+                    const errData = res ? await res.json() : { error: 'Unknown error' };
+                    alert(`Error: ${errData.error}`);
+                }
+            } catch (error) {
+                console.error("Settings save failed:", error);
+                alert('An unexpected error occurred. Please try again.');
+            } finally {
+                saveButton.disabled = false;
+                saveButton.textContent = 'Save Settings';
+            }
+        });
+    }
 
     // --- PAPER GRADER ---
     function updatePaperGraderUI() {

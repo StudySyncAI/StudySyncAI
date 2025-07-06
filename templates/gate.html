@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Required</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .gate-container {
+            max-width: 400px;
+            width: 100%;
+            padding: 2.5rem;
+            text-align: center;
+        }
+        .gate-container h2 {
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+        .gate-container p {
+             color: var(--text-muted-color);
+             margin-bottom: 2rem;
+        }
+        .gate-form input {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background-color: var(--container-bg);
+            color: var(--text-color);
+            font-size: 1rem;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        .gate-form button {
+            width: 100%;
+        }
+        .error-message {
+            color: var(--danger-color);
+            font-weight: 500;
+            margin-top: 1.5rem;
+        }
+    </style>
+</head>
+<body class="dark-mode">
+    <div class="container gate-container">
+        <h2><i class="ph-fill ph-lock-key"></i> Access Required</h2>
+        <p>This is a private instance of SchoolSync AI. Please enter the password to proceed.</p>
+        <form method="POST" class="gate-form">
+            <label for="password" class="sr-only">Password</label>
+            <input type="password" id="password" name="password" placeholder="Enter site password..." required autofocus>
+            <button type="submit" class="styled-button">Unlock</button>
+        </form>
+        {% if error %}
+            <p class="error-message">{{ error }}</p>
+        {% endif %}
+    </div>
+</body>
+</html>
