@@ -233,7 +233,6 @@
     <div id="tos-modal-overlay" class="modal-overlay hidden">
         <div class="modal-box tos-modal">
             <div class="modal-header"><h4>Terms of Service</h4></div>
-            <!-- FIX: Replaced placeholder with an extended, professional ToS -->
             <div class="tos-content">
                 <p><em>Last Updated: July 7, 2025</em></p>
                 
@@ -370,7 +369,7 @@
                 <form id="settings-form">
                     <div class="form-group">
                         <label for="username-input">Custom Username</label>
-                        <input type="text" id="username-input" placeholder="Enter a new username">
+                        <input type="text" id="username-input" name="username" placeholder="Enter a new username">
                     </div>
                     <div class="form-group">
                         <label>Profile Picture</label>
@@ -378,7 +377,7 @@
                             <img src="" alt="Current profile picture" class="profile-pic" id="pfp-preview-settings">
                              <label for="pfp-file-input" class="file-input-label">
                                 <span class="styled-button secondary">Choose Image...</span>
-                                <input type="file" id="pfp-file-input" accept="image/*">
+                                <input type="file" id="pfp-file-input" name="profile_picture" accept="image/*">
                              </label>
                         </div>
                     </div>
