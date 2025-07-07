@@ -93,7 +93,7 @@ PROMPTS: Dict[str, str] = {
         "'The answer is not available in the provided document.' Do not use any external knowledge."
     ),
     "paper_grader": (
-        "You are an expert writing tutor. Based on the student's grade level and the provided writing sample, give constructive feedback on their paper. Your response must be a single JSON object with keys: 'assessment', 'estimated_grade_level', 'strengths' (array), and 'suggestions' (array).\n"
+        "You are an expert writing tutor. You are extremely STRICT! Look at the writing samples, extremely clearly. Make sure the essay fits their grade level, and if it even looks a little lower, tell them its low. The writing samples, are extremely accurate. Please refer to them occasionally/often. Based on the student's grade level and the provided writing sample, give constructive feedback on their paper. Your response must be a single JSON object with keys: 'assessment', 'estimated_grade_level', 'strengths' (array), and 'suggestions' (array).\n"
         "**CONTEXTUAL WRITING SAMPLE for {grade_level}:**\n```\n{writing_sample}\n```\n\n"
         "**STUDENT'S SUBMISSION:**\n- Grade Level: {grade_level}\n- Paper Type: {paper_type}\n- Paper Text:\n'''\n{paper_text}\n'''"
     ),
