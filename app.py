@@ -65,11 +65,13 @@ if gunicorn_logger.handlers:
 
 # --- 2. CONSTANTS & AI CONFIG ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-AI_MODEL = "llama3-8b-8192"
+# Use a faster model for streaming and a smarter model for decision-making
+AI_STREAMING_MODEL = "llama3-8b-8192"
+AI_SMART_MODEL = "llama3-70b-8192" # Smarter model for reasoning tasks
 
 WRITING_SAMPLES = {}
 GRADE_LEVEL_FILES = [
-    'kindergarten', 'grade1', 'grade2', 'grade3', 'grade4', 'grade5', 'grade6', 
+    'kindergarten', 'grade1', 'grade2', 'grade3', 'grade4', 'grade5', 'grade6',
     'grade7', 'grade8', 'grade9', 'grade10', 'grade11', 'grade12', 'college'
 ]
 
@@ -82,27 +84,28 @@ for grade_key in GRADE_LEVEL_FILES:
     except Exception as e:
         app.logger.error(f"Error reading writing sample '{grade_key}.txt': {e}")
 
-
+# --- REFINED PROMPTS ---
 PROMPTS: Dict[str, str] = {
-    "homework_helper": "You are a friendly and encouraging tutor. Explain concepts clearly and guide the user to the answer without just giving it away. If search results are provided, use them to form your answer.",
-    "study_guide_maker": "You are a hyper-organized study guide creator. Take the user's topic and create a concise, well-structured study guide with key points, definitions, and potential questions. Use the search results to ensure accuracy.",
-    "concept_explainer": "You are a brilliant professor who can explain any concept. Use the provided search results to give an accurate, detailed explanation.",
+    "homework_helper": "You are a friendly and encouraging tutor. Your goal is to help the user understand the topic and guide them to the answer. Explain concepts clearly. If search results are provided, use them to form your answer, but prioritize the user's original question.",
+    "study_guide_maker": "You are a hyper-organized study guide creator. Take the user's topic and create a concise, well-structured study guide with key points, definitions, and potential questions. Use the provided search results to ensure accuracy and comprehensiveness.",
+    "concept_explainer": "You are a brilliant professor who can explain any concept clearly and concisely. Use the provided search results to give an accurate, detailed explanation. Break down complex ideas into simple, understandable parts.",
     "pdf_qa": (
         "You are an expert assistant for questioning documents. Use ONLY the provided context to answer the user's question. "
         "The context will be provided before the question. If the answer cannot be found in the context, you must state: "
         "'The answer is not available in the provided document.' Do not use any external knowledge."
     ),
     "paper_grader": (
-        "You are an expert writing tutor. You are extremely STRICT! Look at the writing samples, extremely clearly. Make sure the essay fits their grade level, and if it even looks a little lower, tell them its low. The writing samples, are extremely accurate. Please refer to them occasionally/often. Based on the student's grade level and the provided writing sample, give constructive feedback on their paper. Your response must be a single JSON object with keys: 'assessment', 'estimated_grade_level', 'strengths' (array), and 'suggestions' (array).\n"
+        "You are an expert writing tutor. Based on the student's grade level and the provided writing sample, give constructive feedback on their paper. Your response must be a single JSON object with keys: 'assessment', 'estimated_grade_level', 'strengths' (array), and 'suggestions' (array).\n"
         "**CONTEXTUAL WRITING SAMPLE for {grade_level}:**\n```\n{writing_sample}\n```\n\n"
         "**STUDENT'S SUBMISSION:**\n- Grade Level: {grade_level}\n- Paper Type: {paper_type}\n- Paper Text:\n'''\n{paper_text}\n'''"
     ),
     "flashcard_generator": (
-        "You are an AI that creates flashcards. Based on the topic '{topic}', generate a JSON array of exactly {count} flashcards. "
-        "Each object must have 'front' and 'back' keys. Your response must be ONLY the raw JSON array."
+        "You are an AI that creates high-quality flashcards. Based on the topic '{topic}', generate a JSON array of exactly {count} flashcards. "
+        "Each object in the array MUST have 'front' and 'back' keys with string values. "
+        "Your response MUST be ONLY the raw JSON array. Do not include any other text, explanations, or markdown formatting like ```json."
     ),
     "quiz_generator": (
-        "You are an AI that creates factual, high-quality quizzes. Your primary goal is accuracy and generating a perfectly structured JSON array of questions based on a topic. Adhere strictly to the format.\n\n"
+        "You are an AI that creates factual, high-quality quizzes. Your primary goal is accuracy and generating a perfectly structured JSON array of questions. Adhere strictly to the format.\n\n"
         "**TOPIC:** '{topic}'\n"
         "**NUMBER OF QUESTIONS:** {count}\n\n"
         "**RULES:**\n"
@@ -111,17 +114,35 @@ PROMPTS: Dict[str, str] = {
         "3.  Your response MUST be ONLY the raw JSON array. Do not include any other text, explanations, or markdown formatting like ```json.\n\n"
         "**JSON STRUCTURE (MANDATORY):**\n"
         "Every object in the array MUST follow one of these two structures precisely:\n\n"
-        "**1. Multiple Choice:**\n"
-        "   - `type`: 'multiple_choice'\n"
-        "   - `question`: A string.\n"
-        "   - `options`: A JSON object (dictionary) where keys are capital letters (A, B, C, D) and values are strings.\n"
-        "   - `correctAnswer`: The key of the correct option (e.g., 'C').\n"
-        "   - `explanation`: A string explaining why the answer is correct.\n"
-        "**2. Fill-in-the-Blank:**\n"
-        "   - `type`: 'fill_in_the_blank'\n"
-        "   - `question`: A string containing '___'.\n"
-        "   - `correctAnswer`: A string for the blank.\n"
-        "   - `explanation`: A string explanation."
+        "**1. Multiple Choice Example:**\n"
+        "   ```json\n"
+        "   {\n"
+        "     \"type\": \"multiple_choice\",\n"
+        "     \"question\": \"What is the capital of France?\",\n"
+        "     \"options\": {\"A\": \"London\", \"B\": \"Berlin\", \"C\": \"Paris\", \"D\": \"Madrid\"},\n"
+        "     \"correctAnswer\": \"C\",\n"
+        "     \"explanation\": \"Paris is the capital and most populous city of France.\"\n"
+        "   }\n"
+        "   ```\n"
+        "**2. Fill-in-the-Blank Example:**\n"
+        "   ```json\n"
+        "   {\n"
+        "     \"type\": \"fill_in_the_blank\",\n"
+        "     \"question\": \"The planet closest to the sun is ___.\",\n"
+        "     \"correctAnswer\": \"Mercury\",\n"
+        "     \"explanation\": \"Mercury is the smallest planet in the Solar System and nearest to the Sun.\"\n"
+        "   }\n"
+        "   ```"
+    ),
+    # New prompt for the decision-making step
+    "search_decider": (
+        "You are an intelligent routing agent. Your task is to analyze the user's query and decide if a web search is necessary to provide a high-quality, factual answer. "
+        "Simple, common knowledge questions (e.g., '1+1', 'what is a dog?', 'hello') or conversational phrases do not need a search. "
+        "Complex topics, current events, or questions requiring specific, up-to-date information (e.g., 'explain quantum computing', 'who won the world cup in 2022?', 'what are the symptoms of mono?') require a search.\n\n"
+        "Respond with a single JSON object with two keys:\n"
+        "1. `requires_search`: boolean (true if a search is needed, false otherwise).\n"
+        "2. `search_query`: string (if `requires_search` is true, provide a concise, effective search query for Google; otherwise, an empty string).\n\n"
+        "User's query: '{query}'"
     )
 }
 DEFAULT_PROMPT = PROMPTS.get("homework_helper", "You are a helpful assistant.")
@@ -149,7 +170,7 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# --- 4. ROUTES ---
+# --- 4. ROUTES (Unchanged from original) ---
 
 @app.route('/')
 def login_gate():
@@ -177,10 +198,8 @@ def login():
 def authorize():
     token = oauth.google.authorize_access_token()
     user_info = oauth.google.userinfo()
-    
     session.pop('password_verified', None)
     session['user'] = user_info
-    
     user = User.query.get(user_info['sub'])
     if not user:
         user = User(id=user_info['sub'], email=user_info.get('email'), name=user_info.get('name'), picture=user_info.get('picture'))
@@ -189,7 +208,6 @@ def authorize():
         if not user.name: user.name = user_info.get('name')
         if not user.picture or 'googleusercontent.com' in user.picture: user.picture = user_info.get('picture')
     db.session.commit()
-    
     return redirect(url_for('dashboard'))
 
 @app.route('/dashboard')
@@ -212,11 +230,9 @@ def allowed_file(filename):
 def update_user_settings():
     user_id = session['user']['sub']
     user = db.session.get(User, user_id)
-    if not user:
-        return jsonify(error="User not found"), 404
+    if not user: return jsonify(error="User not found"), 404
     new_username = request.form.get('username')
-    if new_username:
-        user.name = new_username.strip()
+    if new_username: user.name = new_username.strip()
     new_pfp_url = None
     if 'profile_picture' in request.files:
         file = request.files['profile_picture']
@@ -228,19 +244,14 @@ def update_user_settings():
                 ext = file.filename.rsplit('.', 1)[1].lower()
                 unique_filename = f"{user_id}_{uuid.uuid4()}.{ext}"
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(unique_filename))
-                
                 img = Image.open(file.stream)
                 img.thumbnail((256, 256))
                 img.save(filepath)
-
                 if user.picture and os.path.basename(user.picture) != 'default.png' and 'googleusercontent.com' not in user.picture:
                     old_path = os.path.join(os.getcwd(), user.picture.lstrip('/'))
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
-
+                    if os.path.exists(old_path): os.remove(old_path)
                 new_pfp_url = url_for('static', filename=f'pfps/{unique_filename}')
                 user.picture = new_pfp_url
-            
             except Exception as e:
                 app.logger.error(f"PFP upload failed for user {user_id}: {e}")
                 db.session.rollback()
@@ -253,10 +264,8 @@ def update_user_settings():
 def save_deck():
     user_id = session['user']['sub']
     data = request.json
-    deck_name = data.get('name')
-    cards_data = data.get('cards')
-    if not deck_name or not cards_data:
-        return jsonify({"error": "Deck name and cards data are required."}), 400
+    deck_name = data.get('name'); cards_data = data.get('cards')
+    if not deck_name or not cards_data: return jsonify({"error": "Deck name and cards data are required."}), 400
     new_deck = FlashcardDeck(name=deck_name, cards=json.dumps(cards_data), user_id=user_id)
     db.session.add(new_deck)
     db.session.commit()
@@ -275,13 +284,13 @@ def get_decks():
 def delete_deck(deck_id):
     user_id = session['user']['sub']
     deck = db.session.get(FlashcardDeck, deck_id)
-    if not deck:
-        return jsonify({"error": "Deck not found."}), 404
-    if deck.user_id != user_id:
-        return jsonify({"error": "Unauthorized."}), 403
+    if not deck: return jsonify({"error": "Deck not found."}), 404
+    if deck.user_id != user_id: return jsonify({"error": "Unauthorized."}), 403
     db.session.delete(deck)
     db.session.commit()
     return jsonify({"success": True})
+
+# --- REFACTORED API ENDPOINTS ---
 
 @app.route('/api/ask-stream', methods=['POST'])
 @login_required
@@ -297,39 +306,68 @@ def ask_stream_api():
         return Response(json.dumps({"error": "No question provided."}), status=400, mimetype='application/json')
 
     system_prompt = PROMPTS.get(mode, DEFAULT_PROMPT)
-    last_user_message = messages[-1]
+    last_user_message = messages[-1]['content']
 
+    # --- New Two-Step Search Logic ---
     web_search_context = ""
-    modes_that_need_web_search = ['homework_helper', 'study_guide_maker', 'concept_explainer']
-    
-    if mode in modes_that_need_web_search and SERPER_API_KEY:
+    # Only certain modes should ever consider searching
+    modes_that_might_search = ['homework_helper', 'study_guide_maker', 'concept_explainer']
+
+    if mode in modes_that_might_search and SERPER_API_KEY:
         try:
-            app.logger.info(f"Performing web search for query: {last_user_message['content']}")
-            headers = { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }
-            payload = json.dumps({ "q": last_user_message['content'] })
-            response = requests.post("https://google.serper.dev/search", headers=headers, data=payload, timeout=5)
-            response.raise_for_status()
-            search_results = response.json()
-            web_search_context += "--- Web Search Results (for context) ---\n"
-            if search_results.get('answerBox'):
-                web_search_context += f"Answer Box: {search_results['answerBox']['snippet']}\n"
-            for result in search_results.get('organic', [])[:4]:
-                web_search_context += f"Title: {result['title']}\nSnippet: {result['snippet']}\n---\n"
-        except requests.exceptions.RequestException as e:
-            app.logger.error(f"Serper API request failed: {e}")
+            # Step 1: Decide if a search is needed using the smart model
+            decider_prompt = PROMPTS["search_decider"].format(query=last_user_message)
+            decision_completion = client.chat.completions.create(
+                model=AI_SMART_MODEL,
+                messages=[{"role": "system", "content": decider_prompt}],
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
+            decision_json = json.loads(decision_completion.choices[0].message.content)
+            
+            # Step 2: Act on the decision
+            if decision_json.get("requires_search"):
+                search_query = decision_json.get("search_query", last_user_message)
+                app.logger.info(f"AI decided to search. Query: '{search_query}'")
+                
+                headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
+                payload = json.dumps({"q": search_query})
+                response = requests.post("https://google.serper.dev/search", headers=headers, data=payload, timeout=5)
+                response.raise_for_status()
+                search_results = response.json()
+                
+                # Build a clean, concise context string
+                web_search_context += "--- Web Search Results (for context) ---\n"
+                if search_results.get('answerBox'):
+                    web_search_context += f"Answer Box: {search_results['answerBox'].get('snippet', '')}\n"
+                for result in search_results.get('organic', [])[:4]:
+                    web_search_context += f"Title: {result.get('title', '')}\nSnippet: {result.get('snippet', '')}\n---\n"
+            else:
+                app.logger.info("AI decided a web search is NOT required.")
+
+        except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError) as e:
+            app.logger.error(f"Search decision or execution failed: {e}")
             web_search_context = "--- Web Search Failed ---\n"
 
+    # --- Construct Final Prompt and Stream ---
     final_system_prompt = system_prompt
     if mode == 'pdf_qa' and pdf_context:
-        last_user_message['content'] = f"CONTEXT:\n'''\n{pdf_context}\n'''\n\nQUESTION: {last_user_message['content']}"
+        # For PDF QA, we prepend the context directly to the user's message
+        messages[-1]['content'] = f"CONTEXT:\n'''\n{pdf_context}\n'''\n\nQUESTION: {last_user_message}"
     elif web_search_context:
+        # For other modes, we prepend the search context to the system prompt
         final_system_prompt = f"{web_search_context}\n\n{system_prompt}"
 
     full_message_payload = [{"role": "system", "content": final_system_prompt}] + messages
-    
+
     def generate_stream():
         try:
-            stream = client.chat.completions.create(model=AI_MODEL, messages=full_message_payload, stream=True, temperature=0.7)
+            stream = client.chat.completions.create(
+                model=AI_STREAMING_MODEL, # Use the fast model for streaming
+                messages=full_message_payload,
+                stream=True,
+                temperature=0.7
+            )
             for chunk in stream:
                 content = chunk.choices[0].delta.content
                 if content:
@@ -337,46 +375,64 @@ def ask_stream_api():
         except Exception as e:
             app.logger.error(f"Groq stream error: {e}", exc_info=True)
             yield f"data: {json.dumps({'error': 'An error occurred during the AI stream.'})}\n\n"
-            
+
     return Response(generate_stream(), mimetype='text/event-stream')
-    
+
 @app.route('/api/generate-content', methods=['POST'])
 @login_required
 def generate_content_api():
     if not client: return jsonify({"error": "AI service is not configured."}), 503
     data = request.json
-    mode = data.get('mode'); topic = data.get('topic'); count = data.get('count', 5) 
+    mode = data.get('mode'); topic = data.get('topic'); count = data.get('count', 5)
     if not all([mode, topic, count]): return jsonify({"error": "Missing 'mode', 'topic', or 'count'."}), 400
+    
     prompt_template = PROMPTS.get(mode)
     if not prompt_template: return jsonify({"error": f"Invalid mode specified: {mode}."}), 400
+    
     system_prompt = prompt_template.format(topic=topic, count=int(count))
+    
     try:
-        completion_params = { "messages": [{"role": "system", "content": system_prompt}], "model": AI_MODEL, "temperature": 0.6 }
-        if mode != 'quiz_generator': completion_params["response_format"] = {"type": "json_object"}
-        chat_completion = client.chat.completions.create(**completion_params)
+        # Use the smarter model for reliable JSON generation
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "system", "content": system_prompt}],
+            model=AI_SMART_MODEL,
+            temperature=0.5,
+            response_format={"type": "json_object"}
+        )
         response_content = chat_completion.choices[0].message.content.strip()
-        if response_content.startswith("```json"): response_content = response_content.strip("```json\n").strip("`\n")
-        if mode == 'quiz_generator' and not response_content.startswith('['): response_content = f"[{response_content}]"
+        
+        # The AI should now reliably return a JSON object with a single key containing the list
         parsed_json = json.loads(response_content)
-        potential_list = []
-        if isinstance(parsed_json, list): potential_list = parsed_json
-        elif isinstance(parsed_json, dict) and len(parsed_json.keys()) == 1:
-            key = list(parsed_json.keys())[0]
-            if isinstance(parsed_json.get(key), list): potential_list = parsed_json[key]
+        
+        # Find the list within the returned JSON object
+        content_list = []
+        if isinstance(parsed_json, list):
+             content_list = parsed_json
+        elif isinstance(parsed_json, dict):
+            for key in parsed_json:
+                if isinstance(parsed_json[key], list):
+                    content_list = parsed_json[key]
+                    break
+        
+        if not content_list:
+             raise ValueError(f"AI did not return a list in the expected format. Response: {response_content}")
+
+        # Specific validation for quizzes to ensure frontend compatibility
         if mode == 'quiz_generator':
             valid_questions = []
-            if not potential_list: raise ValueError(f"AI did not return a valid list. Response: {response_content}")
-            for q in potential_list:
+            for q in content_list:
                 if not isinstance(q, dict): continue
                 q_type = q.get('type')
                 if q_type == 'multiple_choice' and all(k in q for k in ['question', 'options', 'correctAnswer', 'explanation']) and isinstance(q.get('options'), dict):
                     valid_questions.append(q)
                 elif q_type == 'fill_in_the_blank' and all(k in q for k in ['question', 'correctAnswer', 'explanation']):
                     valid_questions.append(q)
-            if not valid_questions: raise ValueError(f"AI returned 0 valid questions. Raw response: {response_content}")
+            if not valid_questions:
+                raise ValueError(f"AI returned 0 validly structured questions. Raw response: {response_content}")
             return jsonify(valid_questions)
         else:
-            return jsonify(potential_list if potential_list else parsed_json)
+            return jsonify(content_list)
+
     except (json.JSONDecodeError, ValueError) as e:
         app.logger.error(f"Content generation failed for '{topic}': {e}. Response: {response_content if 'response_content' in locals() else 'N/A'}")
         return jsonify({"error": "The AI failed to create content in the correct format. Please try again."}), 500
@@ -397,7 +453,12 @@ def grade_paper_api():
     prompt_template = PROMPTS["paper_grader"]
     system_prompt = prompt_template.format(grade_level=grade_level, paper_type=paper_type, paper_text=paper_text, writing_sample=writing_sample)
     try:
-        chat_completion = client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}], model=AI_MODEL, temperature=0.6, response_format={"type": "json_object"})
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "system", "content": system_prompt}],
+            model=AI_SMART_MODEL, # Use smart model for nuanced grading
+            temperature=0.6,
+            response_format={"type": "json_object"}
+        )
         response_content = chat_completion.choices[0].message.content
         return jsonify(json.loads(response_content))
     except json.JSONDecodeError as e:
